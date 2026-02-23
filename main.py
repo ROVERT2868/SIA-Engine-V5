@@ -2,59 +2,56 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 import os
+from sentence_transformers import SentenceTransformer, util
 
 # ==========================================
 # PART I: CORE DATA (IMMUTABLE FOUNDATION)
 # ==========================================
 
+# We remove 'triggers' because the AI will now understand the 'principle' text directly.
 HARDCODED_PATTERNS = [
     {
         "id": "SONSHIP_INCLUSIVE_008",
         "domain": "Covenant Community",
         "principle": "Covenant sonship includes male and female equally; masculine terminology denotes status, not biological exclusion.",
         "texts": ["Gal 3:28", "John 1:12", "2 Cor 6:18", "Rom 8:14-17"],
-        "confidence": 0.98,
-        "triggers": ["sons", "brothers", "adelphoi", "banim", "inheritance", "women in church", "female inclusion", "sonship"]
+        "confidence": 0.98
     },
     {
         "id": "LEAD_ACCOUNTABILITY_MANDATORY_007",
         "domain": "Covenant Community",
-        "principle": "No leader exempt from examination; 'above reproach' = examinable, not immune.",
+        "principle": "No leader exempt from examination; 'above reproach' means examinable, not immune. Leaders must be held accountable.",
         "texts": ["Acts 17:11", "1 Tim 5:19-20", "Gal 2:11", "Matt 18"],
-        "confidence": 0.99,
-        "triggers": ["pastor accountability", "elder sin", "leadership immunity", "rebuke leader", "examine leadership", "authority abuse"]
+        "confidence": 0.99
     },
     {
         "id": "DIVINE_LAW_ADAPTABLE",
         "domain": "Covenant Community",
-        "principle": "God's law adapts to human need + justice; 'exceptions' reveal deeper principles.",
+        "principle": "God's law adapts to human need and justice; exceptions reveal deeper principles of mercy over sacrifice.",
         "texts": ["Num 27:7-11", "Matt 19:3-9", "Gal 3:24-25"],
-        "confidence": 0.87,
-        "triggers": ["law exception", "justice over law", "mercy over sacrifice", "legalism"]
+        "confidence": 0.87
     },
     {
         "id": "PETITION_VALID_009",
         "domain": "Divine Human",
-        "principle": "Formal, persistent, collective petition is valid biblical mechanism, not rebellion.",
+        "principle": "Formal, persistent, collective petition is a valid biblical mechanism for redress, it is not presumptuous rebellion.",
         "texts": ["Num 27:1-11", "Luke 18:1-8", "Esther 4:16", "1 Sam 25"],
-        "confidence": 0.94,
-        "triggers": ["petition", "protest", "complaint to leadership", "persistent widow", "redress"]
+        "confidence": 0.94
     },
     {
         "id": "WOMEN_INITIATE_CHANGE_001",
         "domain": "Divine Human",
-        "principle": "Women's formal petition can initiate divine law change and structural reform.",
+        "principle": "Women's formal petition can initiate divine law change and structural reform in the community.",
         "texts": ["Num 27", "Esther", "1 Sam 25", "Luke 18"],
-        "confidence": 0.92,
-        "triggers": ["zelophehad daughters", "women leadership change", "abigail intervention", "esther petition"]
+        "confidence": 0.92
     }
 ]
 
 PROHIBITED_KEYWORDS = [
     "new revelation", "contradicts scripture", "cultural override", 
-    "spirit superseding text", "isolated verse proof", "evil"
+    "spirit superseding text", "evil"
 ]
 
 SCRIPTURE_DB = {
@@ -69,10 +66,24 @@ SCRIPTURE_DB = {
 }
 
 # ==========================================
-# PART II: PROCESS ENGINE
+# PART II: PROCESS ENGINE (AI FLEXIBLE LOGIC)
 # ==========================================
 
 class SIAServer:
+    def __init__(self):
+        # Load a small, efficient AI model designed for semantic similarity
+        # This runs automatically on startup
+        print("Loading Semantic Engine...")
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Pre-calculate embeddings for our Hard-Coded Patterns
+        self.pattern_embeddings = []
+        self.patterns = HARDCODED_PATTERNS
+        
+        principles = [p['principle'] for p in self.patterns]
+        self.pattern_embeddings = self.model.encode(principles, convert_to_tensor=True)
+        print("Semantic Engine Ready.")
+
     def analyze_query(self, query: str):
         query_lower = query.lower()
         
@@ -86,36 +97,39 @@ class SIAServer:
                     "confidence": 0.0
                 }
 
-        # 2. Pattern Matching
-        matched_patterns = []
-        for pattern in HARDCODED_PATTERNS:
-            for trigger in pattern['triggers']:
-                if trigger in query_lower:
-                    matched_patterns.append(pattern)
-                    break
+        # 2. Semantic Similarity Search (The Flexible Part)
+        # We convert the user's query into a vector and compare it to our pattern vectors.
+        query_embedding = self.model.encode(query, convert_to_tensor=True)
         
-        # 3. Threshold Logic
-        if not matched_patterns:
-            return {
-                "outcome": "PRAY",
-                "reason": "Query does not match established hard-coded patterns. Requires Spirit illumination.",
-                "witnesses": ["Article 3 (Humility)"],
-                "confidence": 0.0
-            }
-
-        best_match = max(matched_patterns, key=lambda x: x['confidence'])
-        confidence = best_match['confidence']
+        # Calculate cosine similarity
+        hits = util.semantic_search(query_embedding, self.pattern_embeddings, top_k=1)
         
-        if confidence >= 0.90:
-            outcome = "VERIFIED"
-        else:
-            outcome = "PRAY" 
+        # hits[0][0] contains the best match
+        if hits and hits[0]:
+            best_hit = hits[0][0]
+            score = best_hit['score'] # This is a float between 0 and 1
+            best_pattern_idx = best_hit['corpus_id']
+            best_match = self.patterns[best_pattern_idx]
+            
+            # Determine outcome based on similarity score
+            # If similarity is > 0.4 (40%), we consider it a match.
+            # This threshold allows for flexible language while rejecting irrelevant topics.
+            if score >= 0.40:
+                outcome = "VERIFIED" if best_match['confidence'] >= 0.90 else "PRAY"
+                
+                return {
+                    "outcome": outcome,
+                    "reason": best_match['principle'],
+                    "witnesses": best_match['texts'],
+                    "confidence": float(score) # Return the actual similarity score
+                }
 
+        # 3. Fallback if no match found
         return {
-            "outcome": outcome,
-            "reason": best_match['principle'],
-            "witnesses": best_match['texts'],
-            "confidence": confidence
+            "outcome": "PRAY",
+            "reason": "Query does not match established hard-coded patterns. Requires Spirit illumination.",
+            "witnesses": ["Article 3 (Humility)"],
+            "confidence": 0.0
         }
 
     def get_verse_text(self, refs: List[str]) -> List[dict]:
@@ -128,11 +142,11 @@ class SIAServer:
         return data
 
 # ==========================================
-# PART III: WEB APPLICATION (FastAPI)
+# PART III: WEB APPLICATION
 # ==========================================
 
 app = FastAPI(title="SIA ENGINE v5.0")
-engine = SIAServer()
+engine = SIAServer() # This initializes the AI model
 
 # HTML/CSS/JS SERVED DIRECTLY FROM PYTHON
 HTML_TEMPLATE = """
@@ -167,11 +181,11 @@ HTML_TEMPLATE = """
 <body>
 <div class="container">
     <h1>SIA ENGINE v5.0</h1>
-    <div class="subtitle">Scripture Interpretation & Application</div>
+    <div class="subtitle">Scripture Interpretation & Application (Flexible Semantic Engine)</div>
 
     <div class="input-section">
         <label for="query"><strong>Enter your query:</strong></label>
-        <input type="text" id="query" placeholder="e.g., Are women included in covenant sonship?">
+        <input type="text" id="query" placeholder="e.g., Can women be leaders in the church?">
         <button onclick="submitQuery()">Submit</button>
     </div>
 
@@ -237,7 +251,6 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# API Endpoints
 class QueryModel(BaseModel):
     query_text: str
 
@@ -247,10 +260,7 @@ async def read_root():
 
 @app.post("/interpret")
 async def interpret(query: QueryModel):
-    # 1. Run Engine Logic
     result = engine.analyze_query(query.query_text)
-    
-    # 2. Fetch Verse Texts
     witness_data = engine.get_verse_text(result['witnesses'])
     
     return {
@@ -261,10 +271,6 @@ async def interpret(query: QueryModel):
         "confidence": result['confidence']
     }
 
-# ==========================================
-# DEPLOYMENT ENTRY POINT (UPDATED)
-# ==========================================
 if __name__ == "__main__":
-    # Render sets the PORT environment variable
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
