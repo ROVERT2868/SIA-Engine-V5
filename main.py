@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional
-import json
+import os
 
 # ==========================================
 # PART I: CORE DATA (IMMUTABLE FOUNDATION)
@@ -60,7 +60,7 @@ PROHIBITED_KEYWORDS = [
 SCRIPTURE_DB = {
     "Gal 3:28": "There is neither Jew nor Greek, there is neither slave nor free, there is no male and female, for you are all one in Christ Jesus.",
     "John 1:12": "But to all who did receive him, who believed in his name, he gave the right to become children of God.",
-    "Acts 17:11": "Now these Jews were more noble than those in Thessalonica; they received the word with all eagleness, examining the Scriptures daily to see if these things were so.",
+    "Acts 17:11": "Now these Jews were more noble than those in Thessalonica; they received the word with all eagerness, examining the Scriptures daily to see if these things were so.",
     "1 Tim 5:19-20": "Do not admit a charge against an elder except on the evidence of two or three witnesses. As for those who persist in sin, rebuke them in the presence of all.",
     "Num 27:1-11": "Then drew near the daughters of Zelophehad... And the Lord said to Moses, 'The daughters of Zelophehad are right...' This shall be a statute of judgment.",
     "Luke 18:1-8": "And he told them a parable to the effect that they ought always to pray and not lose heart... 'Will not God give justice to his elect, who cry to him day and night?'",
@@ -109,7 +109,7 @@ class SIAServer:
         if confidence >= 0.90:
             outcome = "VERIFIED"
         else:
-            outcome = "PRAY" # For this MVP, we simplify the middle ground to Pray for safety
+            outcome = "PRAY" 
 
         return {
             "outcome": outcome,
@@ -262,7 +262,9 @@ async def interpret(query: QueryModel):
     }
 
 # ==========================================
-# DEPLOYMENT ENTRY POINT
+# DEPLOYMENT ENTRY POINT (UPDATED)
 # ==========================================
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Render sets the PORT environment variable
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
