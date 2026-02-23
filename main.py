@@ -4,48 +4,54 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List
 import os
-from sentence_transformers import SentenceTransformer, util
+import re
+from collections import Counter
 
 # ==========================================
 # PART I: CORE DATA (IMMUTABLE FOUNDATION)
 # ==========================================
 
-# We remove 'triggers' because the AI will now understand the 'principle' text directly.
+# Keywords are kept for weighted scoring, but the engine will fallback to "any text" if these miss.
 HARDCODED_PATTERNS = [
     {
         "id": "SONSHIP_INCLUSIVE_008",
         "domain": "Covenant Community",
         "principle": "Covenant sonship includes male and female equally; masculine terminology denotes status, not biological exclusion.",
         "texts": ["Gal 3:28", "John 1:12", "2 Cor 6:18", "Rom 8:14-17"],
-        "confidence": 0.98
+        "confidence": 0.98,
+        "keywords": ["women", "woman", "female", "sonship", "sons", "inheritance", "gender", "equal", "brothers", "adelphoi"]
     },
     {
         "id": "LEAD_ACCOUNTABILITY_MANDATORY_007",
         "domain": "Covenant Community",
         "principle": "No leader exempt from examination; 'above reproach' means examinable, not immune. Leaders must be held accountable.",
         "texts": ["Acts 17:11", "1 Tim 5:19-20", "Gal 2:11", "Matt 18"],
-        "confidence": 0.99
+        "confidence": 0.99,
+        "keywords": ["leader", "pastor", "elder", "accountability", "examine", "authority", "abuse", "immune", "rebuke", "oversight"]
     },
     {
         "id": "DIVINE_LAW_ADAPTABLE",
         "domain": "Covenant Community",
         "principle": "God's law adapts to human need and justice; exceptions reveal deeper principles of mercy over sacrifice.",
         "texts": ["Num 27:7-11", "Matt 19:3-9", "Gal 3:24-25"],
-        "confidence": 0.87
+        "confidence": 0.87,
+        "keywords": ["law", "justice", "mercy", "exception", "legalism", "rigid", "sabbath", "rule"]
     },
     {
         "id": "PETITION_VALID_009",
         "domain": "Divine Human",
         "principle": "Formal, persistent, collective petition is a valid biblical mechanism for redress, it is not presumptuous rebellion.",
         "texts": ["Num 27:1-11", "Luke 18:1-8", "Esther 4:16", "1 Sam 25"],
-        "confidence": 0.94
+        "confidence": 0.94,
+        "keywords": ["petition", "protest", "complaint", "redress", "widow", "appeal", "request", "change"]
     },
     {
         "id": "WOMEN_INITIATE_CHANGE_001",
         "domain": "Divine Human",
         "principle": "Women's formal petition can initiate divine law change and structural reform in the community.",
         "texts": ["Num 27", "Esther", "1 Sam 25", "Luke 18"],
-        "confidence": 0.92
+        "confidence": 0.92,
+        "keywords": ["zelophehad", "daughters", "esther", "abigail", "reform", "structure", "change"]
     }
 ]
 
@@ -66,23 +72,25 @@ SCRIPTURE_DB = {
 }
 
 # ==========================================
-# PART II: PROCESS ENGINE (AI FLEXIBLE LOGIC)
+# PART II: PROCESS ENGINE (LIGHTWEIGHT)
 # ==========================================
 
 class SIAServer:
     def __init__(self):
-        # Load a small, efficient AI model designed for semantic similarity
-        # This runs automatically on startup
-        print("Loading Semantic Engine...")
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        # Pre-process pattern text for flexible matching
+        self.corpus = []
+        for p in HARDCODED_PATTERNS:
+            # Combine principle + keywords into one string for matching
+            text_blob = f"{p['principle']} {' '.join(p.get('keywords', []))}"
+            self.corpus.append(text_blob.lower())
         
-        # Pre-calculate embeddings for our Hard-Coded Patterns
-        self.pattern_embeddings = []
-        self.patterns = HARDCODED_PATTERNS
-        
-        principles = [p['principle'] for p in self.patterns]
-        self.pattern_embeddings = self.model.encode(principles, convert_to_tensor=True)
-        print("Semantic Engine Ready.")
+        print("Lightweight Engine Initialized.")
+
+    def tokenize(self, text):
+        # Simple cleanup: lowercase, remove punctuation, split into words
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text)
+        return text.split()
 
     def analyze_query(self, query: str):
         query_lower = query.lower()
@@ -97,34 +105,49 @@ class SIAServer:
                     "confidence": 0.0
                 }
 
-        # 2. Semantic Similarity Search (The Flexible Part)
-        # We convert the user's query into a vector and compare it to our pattern vectors.
-        query_embedding = self.model.encode(query, convert_to_tensor=True)
-        
-        # Calculate cosine similarity
-        hits = util.semantic_search(query_embedding, self.pattern_embeddings, top_k=1)
-        
-        # hits[0][0] contains the best match
-        if hits and hits[0]:
-            best_hit = hits[0][0]
-            score = best_hit['score'] # This is a float between 0 and 1
-            best_pattern_idx = best_hit['corpus_id']
-            best_match = self.patterns[best_pattern_idx]
-            
-            # Determine outcome based on similarity score
-            # If similarity is > 0.4 (40%), we consider it a match.
-            # This threshold allows for flexible language while rejecting irrelevant topics.
-            if score >= 0.40:
-                outcome = "VERIFIED" if best_match['confidence'] >= 0.90 else "PRAY"
-                
-                return {
-                    "outcome": outcome,
-                    "reason": best_match['principle'],
-                    "witnesses": best_match['texts'],
-                    "confidence": float(score) # Return the actual similarity score
-                }
+        # 2. Flexible Scoring Algorithm
+        # We count how many query words appear in the pattern's text blob
+        query_words = self.tokenize(query)
+        if not query_words:
+             return {
+                "outcome": "PRAY",
+                "reason": "Empty query.",
+                "witnesses": ["Article 3"],
+                "confidence": 0.0
+            }
 
-        # 3. Fallback if no match found
+        best_score = 0
+        best_match_index = -1
+
+        for i, pattern_blob in enumerate(self.corpus):
+            pattern_words = set(self.tokenize(pattern_blob))
+            # Count intersection
+            common_words = [w for w in query_words if w in pattern_words]
+            score = len(common_words)
+            
+            # Boost score if keywords appear (optional weighting)
+            # But essentially, any matching word increases score
+            
+            if score > best_score:
+                best_score = score
+                best_match_index = i
+
+        # 3. Decision Logic
+        # If we found at least 1 matching word, we return the best pattern
+        if best_match_index >= 0 and best_score > 0:
+            match = HARDCODED_PATTERNS[best_match_index]
+            # Normalize confidence based on overlap (arbitrary scaling)
+            # Max confidence is the pattern's inherent confidence
+            calc_conf = min(match['confidence'], 0.5 + (best_score * 0.1)) 
+            
+            return {
+                "outcome": "VERIFIED" if match['confidence'] >= 0.90 else "PRAY",
+                "reason": match['principle'],
+                "witnesses": match['texts'],
+                "confidence": match['confidence'] # Return hard-coded confidence
+            }
+
+        # 4. Fallback
         return {
             "outcome": "PRAY",
             "reason": "Query does not match established hard-coded patterns. Requires Spirit illumination.",
@@ -146,9 +169,8 @@ class SIAServer:
 # ==========================================
 
 app = FastAPI(title="SIA ENGINE v5.0")
-engine = SIAServer() # This initializes the AI model
+engine = SIAServer()
 
-# HTML/CSS/JS SERVED DIRECTLY FROM PYTHON
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -181,11 +203,11 @@ HTML_TEMPLATE = """
 <body>
 <div class="container">
     <h1>SIA ENGINE v5.0</h1>
-    <div class="subtitle">Scripture Interpretation & Application (Flexible Semantic Engine)</div>
+    <div class="subtitle">Scripture Interpretation & Application</div>
 
     <div class="input-section">
         <label for="query"><strong>Enter your query:</strong></label>
-        <input type="text" id="query" placeholder="e.g., Can women be leaders in the church?">
+        <input type="text" id="query" placeholder="e.g., Can women be leaders?">
         <button onclick="submitQuery()">Submit</button>
     </div>
 
